@@ -108,9 +108,7 @@
   .shop-meta .dot::before{ content:"・"; opacity:0.6; }
   .shop-actions{ display:flex; align-items:center; gap:10px; margin-top:8px; flex-wrap:wrap; }
   .shop-link{ font-size:12px; color:var(--miso); text-decoration:none; }
-  .share-btn{
-    font-size:11px; font-weight:700; padding:4px 10px; border-radius:999px; text-decoration:none; color:white;
-  }
+  .share-btn{ font-size:11px; font-weight:700; padding:4px 10px; border-radius:999px; text-decoration:none; color:white; }
   .share-line{ background:var(--line-brand); }
   .share-x{ background:var(--x-brand); }
   .fav-btn{ position:absolute; top:14px; right:14px; background:none; border:none; font-size:18px; cursor:pointer; line-height:1; opacity:0.35; padding:2px; }
@@ -141,7 +139,7 @@
   <div class="controls">
     <div class="search-box">
       <span class="icon">🔎</span>
-      <input type="text" id="searchInput" placeholder="店名・ジャンル・エリアで検索">
+      <input type="text" id="searchInput" placeholder="店名・エリアで検索">
       <button class="clear" id="clearSearch">✕</button>
     </div>
 
@@ -186,13 +184,35 @@ const CENTER = { lat: 35.1685, lng: 136.9040 };
 const SEARCH_RANGE = 4;
 const SEARCH_COUNT = 100;
 const FAV_STORAGE_KEY = "imameshi_favorites";
+const GENRE_CACHE_KEY = "imameshi_genre_cache_v1";
 const APP_URL = "https://nao-bit-gif.github.io/ima-meshi-map/";
+
+// ジャンルチップ定義：genreは公式ジャンルコード、keywordはフリーワード検索
+const GENRE_CHIPS = [
+  { key:"ALL",      label:"すべて",            params:{} },
+  { key:"IZAKAYA",  label:"居酒屋",            params:{genre:"G001"} },
+  { key:"YAKINIKU", label:"焼肉・ホルモン",     params:{genre:"G008"} },
+  { key:"RAMEN",    label:"ラーメン",          params:{genre:"G013"} },
+  { key:"CHINESE",  label:"中華",              params:{genre:"G007"} },
+  { key:"ITALIAN",  label:"イタリアン・フレンチ", params:{genre:"G006"} },
+  { key:"WASHOKU",  label:"和食",              params:{genre:"G004"} },
+  { key:"CAFE",     label:"カフェ・スイーツ",   params:{genre:"G015"} },
+  { key:"OKONOMI",  label:"お好み焼き・もんじゃ", params:{genre:"G014"} },
+  { key:"BAR",      label:"バー・カクテル",     params:{genre:"G012"} },
+  { key:"ASIAN",    label:"アジア・エスニック料理", params:{genre:"G009"} },
+  { key:"SUSHI",    label:"寿司",              params:{keyword:"寿司"} },
+  { key:"YAKITORI", label:"焼き鳥・串",         params:{keyword:"焼き鳥"} },
+  { key:"KISSA",    label:"喫茶店",            params:{keyword:"喫茶"} },
+  { key:"UDON",     label:"うどん",            params:{keyword:"うどん"} },
+  { key:"OMURICE",  label:"オムライス",         params:{keyword:"オムライス"} },
+  { key:"CURRY",    label:"カレー",            params:{keyword:"カレー"} },
+];
 
 const ICON_RULES = [
   [/焼肉|ホルモン/, "🥩"], [/ラーメン/, "🍜"], [/寿司|鮨/, "🍣"],
   [/カフェ|喫茶/, "☕"], [/イタリアン|フレンチ|洋食/, "🍝"],
   [/中華/, "🥟"], [/居酒屋|バー|ダイニング/, "🍶"], [/カレー/, "🍛"],
-  [/焼き鳥|串/, "🍢"], [/お好み焼き|もんじゃ/, "🥞"],
+  [/焼き鳥|串/, "🍢"], [/お好み焼き|もんじゃ/, "🥞"], [/うどん/, "🍥"],
 ];
 const COLOR_PALETTE = ["#8C3A2B","#B0432B","#C97A2B","#8A6A3F","#3F6B8A","#5C7A4B","#A6402F","#6E5327","#7A4A6E","#3F6B58"];
 
@@ -219,7 +239,6 @@ function isOpenNow(ranges, now){
   return false;
 }
 
-// ===== 距離計算 =====
 function haversine(lat1,lng1,lat2,lng2){
   const R=6371000, toRad = x => x*Math.PI/180;
   const dLat = toRad(lat2-lat1), dLng = toRad(lng2-lng1);
@@ -228,7 +247,6 @@ function haversine(lat1,lng1,lat2,lng2){
 }
 function formatDistance(m){ return m < 1000 ? `${Math.round(m)}m` : `${(m/1000).toFixed(1)}km`; }
 
-// ===== お気に入り =====
 function loadFavorites(){
   try{ const raw = localStorage.getItem(FAV_STORAGE_KEY); return new Set(raw ? JSON.parse(raw) : []); }
   catch(e){ return new Set(); }
@@ -236,7 +254,18 @@ function loadFavorites(){
 function saveFavorites(set){ try{ localStorage.setItem(FAV_STORAGE_KEY, JSON.stringify([...set])); }catch(e){} }
 let favorites = loadFavorites();
 
-// ===== バナー（複数積める） =====
+// ===== ジャンル別キャッシュ（月初・月半ばで自動更新） =====
+function loadGenreCache(){
+  try{ return JSON.parse(localStorage.getItem(GENRE_CACHE_KEY) || "{}"); }catch(e){ return {}; }
+}
+function saveGenreCache(cache){ try{ localStorage.setItem(GENRE_CACHE_KEY, JSON.stringify(cache)); }catch(e){} }
+let genreCache = loadGenreCache();
+function currentPeriodKey(now = new Date()){
+  const y = now.getFullYear(), m = String(now.getMonth()+1).padStart(2,'0');
+  const half = now.getDate() <= 14 ? 'A' : 'B'; // 1〜14日=A、15日〜月末=B（1日と15日に切り替わる）
+  return `${y}-${m}-${half}`;
+}
+
 function addBanner(message, type){
   const el = document.getElementById('statusBanner');
   const div = document.createElement('div');
@@ -245,12 +274,11 @@ function addBanner(message, type){
   el.appendChild(div);
 }
 
-// ===== 状態 =====
-let activeGenre = "すべて";
+let activeChipKey = "ALL";
 let openOnly = true;
 let favOnly = false;
 let searchQuery = "";
-let allShops = [];
+let currentShops = [];
 let userLoc = null;
 let userMarker = null;
 
@@ -288,16 +316,16 @@ function render(){
   document.getElementById('clock').textContent =
     String(now.getHours()).padStart(2,'0')+":"+String(now.getMinutes()).padStart(2,'0');
 
-  const withStatus = allShops.map(s => ({
+  const withStatus = currentShops.map(s => ({
     ...s,
     open_now: isOpenNow(s.ranges, now),
     distance: userLoc ? haversine(userLoc.lat, userLoc.lng, s.lat, s.lng) : null,
   }));
   const openCount = withStatus.filter(s=>s.open_now === true).length;
-  document.getElementById('openCount').textContent = `${openCount}/${allShops.length}件`;
+  document.getElementById('openCount').textContent = `${openCount}/${currentShops.length}件`;
   document.getElementById('favCount').textContent = `${favorites.size}件`;
 
-  let filtered = withStatus.filter(s => activeGenre === "すべて" || s.genre === activeGenre);
+  let filtered = withStatus;
   if(openOnly) filtered = filtered.filter(s => s.open_now === true);
   if(favOnly) filtered = filtered.filter(s => favorites.has(s.id));
   if(searchQuery) filtered = filtered.filter(s => matchesSearch(s, searchQuery));
@@ -370,24 +398,86 @@ function toggleFavorite(id){
 }
 
 function buildGenreChips(){
-  const genres = ["すべて", ...new Set(allShops.map(s => s.genre))];
   const genreRow = document.getElementById('genreRow');
   genreRow.innerHTML = '';
-  genres.forEach(g => {
-    const chip = document.createElement('div');
-    chip.className = 'chip' + (g === activeGenre ? ' active' : '');
-    chip.textContent = g;
-    chip.addEventListener('click', () => {
-      activeGenre = g;
-      document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
-      chip.classList.add('active');
-      render();
-    });
-    genreRow.appendChild(chip);
+  GENRE_CHIPS.forEach(chip => {
+    const el = document.createElement('div');
+    el.className = 'chip' + (chip.key === activeChipKey ? ' active' : '');
+    el.textContent = chip.label;
+    el.dataset.key = chip.key;
+    el.addEventListener('click', () => selectChip(chip));
+    genreRow.appendChild(el);
+  });
+}
+function updateChipUI(){
+  document.querySelectorAll('.chip').forEach(el => {
+    el.classList.toggle('active', el.dataset.key === activeChipKey);
   });
 }
 
-// ===== 現在地 =====
+async function fetchShops(extraParams){
+  const params = new URLSearchParams({
+    lat: CENTER.lat, lng: CENTER.lng, range: SEARCH_RANGE, order: 4, count: SEARCH_COUNT, ...extraParams,
+  });
+  const res = await fetch(`${PROXY_BASE}/?${params.toString()}`);
+  if(!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  if(data.error) throw new Error(data.error);
+  const shops = (data.results && data.results.shop) || [];
+  return shops.map(shop => ({
+    id: shop.id,
+    name: shop.name,
+    genre: (shop.genre && shop.genre.name) || "その他",
+    area: (shop.small_area && shop.small_area.name) || (shop.middle_area && shop.middle_area.name) || "",
+    budget: (shop.budget && shop.budget.name) || "",
+    lat: parseFloat(shop.lat),
+    lng: parseFloat(shop.lng),
+    openText: shop.open || "",
+    ranges: parseOpenRanges(shop.open || ""),
+    url: (shop.urls && shop.urls.pc) || null,
+    photo: (shop.photo && shop.photo.pc && shop.photo.pc.l) || null,
+  }));
+}
+
+const SAMPLE_SHOPS = [
+  {id:"s1", name:"炭火焼鳥 伏見横丁", genre:"居酒屋", area:"伏見", budget:"¥3,000〜¥4,000", openText:"17:00~24:00", lat:35.1660, lng:136.8990},
+  {id:"s2", name:"栄 ホルモン本舗", genre:"焼肉", area:"栄", budget:"¥4,000〜¥5,000", openText:"17:30~26:00", lat:35.1705, lng:136.9085},
+  {id:"s3", name:"らーめん 一心", genre:"ラーメン", area:"栄", budget:"¥900〜¥1,300", openText:"11:00~22:00", lat:35.1692, lng:136.9065},
+  {id:"s4", name:"喫茶 モーニング堂", genre:"カフェ", area:"伏見", budget:"¥600〜¥1,000", openText:"07:00~18:00", lat:35.1648, lng:136.8975},
+  {id:"s5", name:"名駅寿司 伏見店", genre:"寿司", area:"伏見", budget:"¥5,000〜¥8,000", openText:"17:00~23:00", lat:35.1672, lng:136.8998},
+].map(s => ({...s, ranges: parseOpenRanges(s.openText), url:null, photo:null}));
+
+async function getShopsForChip(chip){
+  const period = currentPeriodKey();
+  const cached = genreCache[chip.key];
+  if(cached && cached.periodKey === period){
+    return cached.shops;
+  }
+  const shops = await fetchShops(chip.params);
+  genreCache[chip.key] = { periodKey: period, shops };
+  saveGenreCache(genreCache);
+  return shops;
+}
+
+async function selectChip(chip){
+  activeChipKey = chip.key;
+  updateChipUI();
+  document.getElementById('shopList').innerHTML = `<li class="loading">読み込み中…</li>`;
+  try{
+    currentShops = await getShopsForChip(chip);
+    if(currentShops.length === 0) throw new Error("0 results");
+  }catch(err){
+    console.error("取得失敗:", err);
+    if(chip.key === "ALL"){
+      currentShops = SAMPLE_SHOPS;
+      addBanner("実データの取得に失敗したため、サンプルデータを表示しています（Workerの設定またはCORSをご確認ください）", "error");
+    }else{
+      addBanner(`「${chip.label}」のお店が見つかりませんでした`, "info");
+    }
+  }
+  render();
+}
+
 function placeUserMarker(){
   if(!userLoc) return;
   if(userMarker) map.removeLayer(userMarker);
@@ -418,45 +508,7 @@ document.getElementById('locateBtn').addEventListener('click', () => {
   else { requestLocation(); }
 });
 
-const SAMPLE_SHOPS = [
-  {id:"s1", name:"炭火焼鳥 伏見横丁", genre:"居酒屋", area:"伏見", budget:"¥3,000〜¥4,000", openText:"17:00~24:00", lat:35.1660, lng:136.8990},
-  {id:"s2", name:"栄 ホルモン本舗", genre:"焼肉", area:"栄", budget:"¥4,000〜¥5,000", openText:"17:30~26:00", lat:35.1705, lng:136.9085},
-  {id:"s3", name:"らーめん 一心", genre:"ラーメン", area:"栄", budget:"¥900〜¥1,300", openText:"11:00~22:00", lat:35.1692, lng:136.9065},
-  {id:"s4", name:"喫茶 モーニング堂", genre:"カフェ", area:"伏見", budget:"¥600〜¥1,000", openText:"07:00~18:00", lat:35.1648, lng:136.8975},
-  {id:"s5", name:"名駅寿司 伏見店", genre:"寿司", area:"伏見", budget:"¥5,000〜¥8,000", openText:"17:00~23:00", lat:35.1672, lng:136.8998},
-].map(s => ({...s, ranges: parseOpenRanges(s.openText), url:null, photo:null}));
-
-async function loadFromApi(){
-  const url = `${PROXY_BASE}/?lat=${CENTER.lat}&lng=${CENTER.lng}&range=${SEARCH_RANGE}&order=4&count=${SEARCH_COUNT}`;
-  const res = await fetch(url);
-  if(!res.ok) throw new Error(`HTTP ${res.status}`);
-  const data = await res.json();
-  if(data.error) throw new Error(data.error);
-  const shops = (data.results && data.results.shop) || [];
-  if(shops.length === 0) throw new Error("0 results");
-  return shops.map(shop => ({
-    id: shop.id,
-    name: shop.name,
-    genre: (shop.genre && shop.genre.name) || "その他",
-    area: (shop.small_area && shop.small_area.name) || (shop.middle_area && shop.middle_area.name) || "",
-    budget: (shop.budget && shop.budget.name) || "",
-    lat: parseFloat(shop.lat),
-    lng: parseFloat(shop.lng),
-    openText: shop.open || "",
-    ranges: parseOpenRanges(shop.open || ""),
-    url: (shop.urls && shop.urls.pc) || null,
-    photo: (shop.photo && shop.photo.pc && shop.photo.pc.l) || null,
-  }));
-}
-
 async function init(){
-  try{
-    allShops = await loadFromApi();
-  }catch(err){
-    console.error("API取得失敗、サンプルデータにフォールバック:", err);
-    allShops = SAMPLE_SHOPS;
-    addBanner("実データの取得に失敗したため、サンプルデータを表示しています（Workerの設定またはCORSをご確認ください）", "error");
-  }
   buildGenreChips();
 
   document.getElementById('openOnly').addEventListener('change', (e) => { openOnly = e.target.checked; render(); });
@@ -473,7 +525,7 @@ async function init(){
     searchInput.value = ''; searchQuery = ''; clearBtn.style.display = 'none'; render();
   });
 
-  render();
+  await selectChip(GENRE_CHIPS[0]); // 初期表示は「すべて」
   requestLocation();
   setInterval(render, 30000);
 }
