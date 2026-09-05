@@ -182,7 +182,7 @@
 const PROXY_BASE = "https://ima-meshi-proxy.emsc3f-g-vo.workers.dev";
 const CENTER = { lat: 35.1685, lng: 136.9040 };
 const SEARCH_RANGE = 4;
-const SEARCH_COUNT = 100;
+const SEARCH_COUNT = 30;
 const FAV_STORAGE_KEY = "imameshi_favorites";
 const GENRE_CACHE_KEY = "imameshi_genre_cache_v1";
 const APP_URL = "https://nao-bit-gif.github.io/ima-meshi-map/";
@@ -359,11 +359,14 @@ function render(){
       li.className = 'shop-card';
       const st = statusLabel(s.open_now);
       const isFav = favorites.has(s.id);
-      const thumbStyle = s.photo ? `background-image:url('${s.photo}')` : `background:${colorFor(s.genre)}`;
       const links = shareLinks(s);
+      const thumbInner = s.photo
+        ? `<img src="${s.photo}" loading="lazy" decoding="async" alt="" style="width:100%;height:100%;object-fit:cover;">`
+        : iconFor(s.genre);
+      const thumbStyle = s.photo ? '' : `background:${colorFor(s.genre)}`;
       li.innerHTML = `
         <button class="fav-btn${isFav ? ' active' : ''}" data-id="${s.id}" aria-label="お気に入り">${isFav ? '❤️' : '🤍'}</button>
-        <div class="thumb" style="${thumbStyle}">${s.photo ? '' : iconFor(s.genre)}</div>
+        <div class="thumb" style="${thumbStyle}">${thumbInner}</div>
         <div class="shop-main">
           <div class="shop-top">
             <p class="shop-name">${s.name}</p>
@@ -435,7 +438,7 @@ async function fetchShops(extraParams){
     openText: shop.open || "",
     ranges: parseOpenRanges(shop.open || ""),
     url: (shop.urls && shop.urls.pc) || null,
-    photo: (shop.photo && shop.photo.pc && shop.photo.pc.l) || null,
+    photo: (shop.photo && shop.photo.pc && (shop.photo.pc.s || shop.photo.pc.m || shop.photo.pc.l)) || null,
   }));
 }
 
@@ -462,20 +465,44 @@ async function getShopsForChip(chip){
 async function selectChip(chip){
   activeChipKey = chip.key;
   updateChipUI();
-  document.getElementById('shopList').innerHTML = `<li class="loading">読み込み中…</li>`;
+
+  const period = currentPeriodKey();
+  const cached = genreCache[chip.key];
+
+  if(cached && cached.shops && cached.shops.length){
+    // キャッシュがあれば期間が古くても即表示（体感速度優先）
+    currentShops = cached.shops;
+    render();
+  }else{
+    document.getElementById('shopList').innerHTML = `<li class="loading">読み込み中…</li>`;
+  }
+
+  const needsRefresh = !cached || cached.periodKey !== period;
+  if(!needsRefresh) return;
+
   try{
-    currentShops = await getShopsForChip(chip);
-    if(currentShops.length === 0) throw new Error("0 results");
+    const shops = await fetchShops(chip.params);
+    if(shops.length === 0) throw new Error("0 results");
+    genreCache[chip.key] = { periodKey: period, shops };
+    saveGenreCache(genreCache);
+    if(activeChipKey === chip.key){
+      currentShops = shops;
+      render();
+    }
   }catch(err){
     console.error("取得失敗:", err);
-    if(chip.key === "ALL"){
-      currentShops = SAMPLE_SHOPS;
-      addBanner("実データの取得に失敗したため、サンプルデータを表示しています（Workerの設定またはCORSをご確認ください）", "error");
-    }else{
-      addBanner(`「${chip.label}」のお店が見つかりませんでした`, "info");
+    if(!cached){
+      if(chip.key === "ALL"){
+        currentShops = SAMPLE_SHOPS;
+        addBanner("実データの取得に失敗したため、サンプルデータを表示しています（Workerの設定またはCORSをご確認ください）", "error");
+      }else{
+        addBanner(`「${chip.label}」のお店が見つかりませんでした`, "info");
+        currentShops = [];
+      }
+      render();
     }
+    // キャッシュ済みデータがある場合は、更新に失敗しても表示中のデータをそのまま維持
   }
-  render();
 }
 
 function placeUserMarker(){
@@ -525,8 +552,8 @@ async function init(){
     searchInput.value = ''; searchQuery = ''; clearBtn.style.display = 'none'; render();
   });
 
-  await selectChip(GENRE_CHIPS[0]); // 初期表示は「すべて」
   requestLocation();
+  selectChip(GENRE_CHIPS[0]); // 初期表示は「すべて」（awaitしないことで体感速度を優先）
   setInterval(render, 30000);
 }
 
