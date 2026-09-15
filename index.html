@@ -418,11 +418,23 @@ function updateChipUI(){
   });
 }
 
+const FETCH_TIMEOUT_MS = 10000;
+
 async function fetchShops(extraParams){
   const params = new URLSearchParams({
     lat: CENTER.lat, lng: CENTER.lng, range: SEARCH_RANGE, order: 4, count: SEARCH_COUNT, ...extraParams,
   });
-  const res = await fetch(`${PROXY_BASE}/?${params.toString()}`);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  let res;
+  try{
+    res = await fetch(`${PROXY_BASE}/?${params.toString()}`, { signal: controller.signal });
+  }catch(err){
+    if(err.name === 'AbortError') throw new Error('通信がタイムアウトしました');
+    throw new Error('通信に失敗しました');
+  }finally{
+    clearTimeout(timeoutId);
+  }
   if(!res.ok) throw new Error(`HTTP ${res.status}`);
   const data = await res.json();
   if(data.error) throw new Error(data.error);
@@ -495,11 +507,14 @@ async function selectChip(chip){
       if(chip.key === "ALL"){
         currentShops = SAMPLE_SHOPS;
         addBanner("実データの取得に失敗したため、サンプルデータを表示しています（Workerの設定またはCORSをご確認ください）", "error");
+        render();
       }else{
-        addBanner(`「${chip.label}」のお店が見つかりませんでした`, "info");
         currentShops = [];
+        render();
+        const list = document.getElementById('shopList');
+        list.innerHTML = `<li class="loading" style="cursor:pointer; text-decoration:underline;">「${chip.label}」の読み込みに失敗しました（${err.message}）。タップして再試行</li>`;
+        list.querySelector('li').addEventListener('click', () => selectChip(chip));
       }
-      render();
     }
     // キャッシュ済みデータがある場合は、更新に失敗しても表示中のデータをそのまま維持
   }
