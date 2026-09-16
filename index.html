@@ -131,7 +131,7 @@
       <h1>今メシ</h1>
       <span>栄・伏見 営業中グルメマップ</span>
     </div>
-    <p class="subline" id="subline">現在時刻 <span class="clock" id="clock">--:--</span> 時点で営業中のお店を表示</p>
+    <p class="subline" id="subline">現在時刻 --:-- 時点で営業中のお店を表示</p>
   </header>
 
   <div id="statusBanner"></div>
@@ -313,8 +313,10 @@ function shareLinks(s){
 
 function render(){
   const now = new Date();
-  document.getElementById('clock').textContent =
-    String(now.getHours()).padStart(2,'0')+":"+String(now.getMinutes()).padStart(2,'0');
+  const timeStr = String(now.getHours()).padStart(2,'0')+":"+String(now.getMinutes()).padStart(2,'0');
+  document.getElementById('subline').textContent = userLoc
+    ? "現在地から近い順・営業中のお店を表示"
+    : `現在時刻 ${timeStr} 時点で営業中のお店を表示`;
 
   const withStatus = currentShops.map(s => ({
     ...s,
@@ -535,7 +537,6 @@ function requestLocation(){
     (pos) => {
       userLoc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
       placeUserMarker();
-      document.getElementById('subline').textContent = "現在地から近い順・営業中のお店を表示";
       render();
     },
     (err) => {
